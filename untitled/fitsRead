@@ -1,0 +1,129 @@
+import matplotlib
+import matplotlib.pyplot as plt
+import numpy as np
+from matplotlib.colors import LogNorm
+
+from astropy.utils.data import download_file
+from astropy.io import fits
+from astropy.cosmology import LambdaCDM
+from astropy import units as u
+from astropy import constants as const
+from astropy.coordinates import ICRS, Galactic, FK4, FK5  # Low-level frames
+from astropy.coordinates import SkyCoord  # High-level coordinates
+from astropy.coordinates import Angle, Latitude, Longitude  # Angles
+import math
+import concurrent.futures
+import pickle
+from sortedcontainers import SortedDict, SortedList, SortedSet
+
+#need to do:
+# after building dictionaries and bucketing clusters
+#search each bucket for pairings, returning pairs as a sortedset
+#catch each thread into a sortedDict and then graph them using pairs[i] = threadDict[i].result()
+#save the result set using pickle for later access.
+
+def R_Bound(Lambda):
+    M200 = 10**((14.499) + (1.33)* math.log10(Lambda/40))
+    R200m = ((1.432*10**(-11))*M200)**(1/3)*u.Mpc
+    return R200m*3
+
+#def isPair(j, k, pairList, clusterData, coordDict, thetaBoundDict):
+#    if u.radian.to(coordDict[j].separation(coordDict[k]), equivalencies=u.dimensionless_angles()) < thetaBoundDict[j]:
+#        pairList.add((j,k))
+#        print('found a pair %f, %f' % (j,k))
+
+def search(start, end, galaxyDict, coordDict, thetaBoundDict):
+    dictKeyList = galaxyDict.keys()
+    keyListLength = len(dictKeyList)
+    pairList = SortedList()
+    for i in range(start, end):
+        j = i + 1
+        while j < keyListLength and dictKeyList[j] - dictKeyList[i] < .01:
+            if u.radian.to(coordDict[i].separation(coordDict[j]), equivalencies=u.dimensionless_angles()) < thetaBoundDict[i]:
+                pairList.add((galaxyDict[i],galaxyDict[j]))
+            j = j + 1
+    return pairList
+
+
+
+cosmo = LambdaCDM(H0= 70, Om0= 0.3, Ode0= 0.7)
+clusters = fits.open('input1.fits', memmap=True)
+clusterData = clusters[1].data
+print(clusters[1].columns)
+galaxyDict = SortedDict()
+coordDict = SortedDict()
+threadDict = SortedDict()
+thetaBoundDict = SortedDict()
+pairList = SortedList()
+bucket = 0.00
+
+for i in range(0,len(clusterData)):
+    print(i)
+    coordDict[i] = SkyCoord(clusterData[i]['RA'], clusterData[i]['DEC'], frame='icrs', unit="deg")
+    thetaBoundDict[i] = R_Bound(clusterData[i]['Z_LAMBDA']) / cosmo.angular_diameter_distance(clusterData[i]['Z_LAMBDA'])
+    galaxyDict[clusterData[i]['Z_LAMBDA']] = i
+
+dictKeyList = galaxyDict.keys()
+keyListLength = len(dictKeyList)
+numWorkers = 8
+print("taco")
+with concurrent.futures.ProcessPoolExecutor() as executor:
+    for i in range(0,numWorkers):
+        threadDict[i] = executor.submit(search, int((i*keyListLength)/numWorkers), int(((i+1)*keyListLength)/numWorkers), galaxyDict, coordDict, thetaBoundDict)
+            #search(i*(1/numWorkers)*keyListLength, (i+1)*(1/numWorkers)*keyListLength, dictKeyList, coordDict, thetaBoundDict)
+print("taco1")
+for i in range(0, numWorkers):
+    for pair in threadDict[i].result():
+        pairList.add(pair)
+        print(pair)
+print("taco2")
+#for i in range(0, keyListLength-1):
+#    j = i + 1
+#    while j < keyListLength and dictKeyList[j] - dictKeyList[i] < .01:
+#        isPair(galaxyDict[dictKeyList[i]], galaxyDict[dictKeyList[j]], pairList, clusterData, coordDict, thetaBoundDict)
+#        j = j + 1
+
+print('length of pairlist: %d' % (len(pairList)))
+print("pairs in list:")
+for i in pairList:
+    print(i)
+#barGraph = plt.bar()
+#xList = list()
+#yList = list()
+#eList = list()
+#for i in range(0, len(dictKeyList)):
+#    if len(pairList[dictKeyList[i]]) > 0:
+#        xList.append(dictKeyList[i])
+#        yList.append(len(pairDict[dictKeyList[i]])/len(galaxyDict[dictKeyList[i]]))
+#        eList.append(math.sqrt(1/len(pairDict[dictKeyList[i]] + 1/len(galaxyDict[dictKeyList[i]]))))
+#    else:
+#        xList.append(dictKeyList[i])
+#        yList.append(0.00)
+#        eList.append(0.00)
+
+#plt.errorbar(xList, yList, eList)
+#plt.savefig("outputTpair.png")
+
+#all of the i's that apply from the clusterData array
+
+#print(galaxyDict.__len__())
+
+
+#for i in range(0, 2000):
+#    coord1 = SkyCoord(clusterData[i]['RA'], clusterData[i]['DEC'], frame='icrs', unit="deg")
+#    thetaBound = R_Bound(clusterData[i]['Z_LAMBDA']) / cosmo.angular_diameter_distance(clusterData[i]['Z_LAMBDA'])
+#    print(i)
+#    for j in range(i+1, 2000):
+#        if math.fabs(clusterData[i]['Z_LAMBDA']-clusterData[j]['Z_LAMBDA']) <= 0.01:
+#            coord2 = SkyCoord(clusterData[j]['RA'], clusterData[j]['DEC'], frame='icrs', unit="deg")
+#            separationAngle = u.radian.to(coord1.separation(coord2), equivalencies=u.dimensionless_angles())
+            #thetaAngle = u.degree.to(thetaBound, u.dimensionless_angles())
+            #print(thetaBound)
+            #print(separationAngle)
+            #print()
+#            if separationAngle < thetaBound:
+#                print("cluster bound pair found! ID 1 = %d ID 2 = %d, Thetabound = %f\n" % (clusterData[i]['ID'], clusterData[j]['ID'], thetaBound))
+
+
+
+
